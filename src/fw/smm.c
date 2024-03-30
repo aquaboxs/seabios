@@ -8,6 +8,7 @@
 #include "config.h" // CONFIG_*
 #include "dev-q35.h"
 #include "dev-piix.h"
+#include "dev-via.h"
 #include "hw/pci.h" // pci_config_writel
 #include "hw/pcidevice.h" // pci_find_device
 #include "hw/pci_ids.h" // PCI_VENDOR_ID_INTEL
