@@ -231,7 +231,7 @@ static void mch_isa_bridge_setup(struct pci_device *dev, void *arg)
 /* VIA PCI to ISA bridge */
 static void via_isa_bridge_setup(struct pci_device *pci, void *arg)
 {
-    u16 bdf = dev->bdf;
+    u16 bdf = pci->bdf;
     int irq, i;
 
     for (i = 0; i < 4; i++) {
