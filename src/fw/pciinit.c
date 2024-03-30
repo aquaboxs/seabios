@@ -9,6 +9,7 @@
 #include "config.h" // CONFIG_*
 #include "dev-q35.h" // Q35_HOST_BRIDGE_PCIEXBAR_ADDR
 #include "dev-piix.h" // PIIX_*
+#include "dev-via.h" // VIA_*
 #include "e820map.h" // e820_add
 #include "hw/ata.h" // PORT_ATA1_CMD_BASE
 #include "hw/pci.h" // pci_config_readl
@@ -142,6 +143,18 @@ static int mch_pci_slot_get_irq(struct pci_device *pci, int pin)
     return pci_irqs[(pin - 1 + pin_addend) & 3];
 }
 
+static int via_pci_slot_get_irq(struct pci_device *pci, int pin)
+{
+    int slot_addend = 0;
+
+    while (pci->parent != NULL) {
+        slot_addend += pci_bdf_to_dev(pci->bdf);
+        pci = pci->parent;
+    }
+    slot_addend += pci_bdf_to_dev(pci->bdf) - 1;
+    return pci_irqs[(pin - 1 + slot_addend) & 3];
+}
+
 /* PIIX3/PIIX4 PCI to ISA bridge */
 static void piix_isa_bridge_setup(struct pci_device *pci, void *arg)
 {
@@ -215,6 +228,27 @@ static void mch_isa_bridge_setup(struct pci_device *dev, void *arg)
     pmtimer_setup(acpi_pm_base + 0x08);
 }
 
+/* VIA PCI to ISA bridge */
+static void via_isa_bridge_setup(struct pci_device *pci, void *arg)
+{
+    int irq;
+
+    for (i = 0; i < 4; i++) {
+        irq = pci_irqs[i];
+
+        /* activate irq remapping in VIA */
+
+        /* INTA */
+        pci_config_writeb(bdf, 0x55 >> 4 + i, irq);
+        /* INTB */
+        pci_config_writeb(bdf, 0x56 & 0xf + i, irq);
+        /* INTC */
+        pci_config_writeb(bdf, 0x56 >> 4 + i, irq);
+        /* INTD */
+        pci_config_writeb(bdf, 0x57 >> 4 + i, irq);
+    }
+}
+
 static void storage_ide_setup(struct pci_device *pci, void *arg)
 {
     /* IDE: we map it as in ISA mode */
@@ -230,6 +264,15 @@ static void piix_ide_setup(struct pci_device *pci, void *arg)
     u16 bdf = pci->bdf;
     pci_config_writew(bdf, 0x40, 0x8000); // enable IDE0
     pci_config_writew(bdf, 0x42, 0x8000); // enable IDE1
+}
+
+/* VIA IDE */
+static void via_ide_setup(struct pci_device *pci, void *arg)
+{
+    u16 bdf = pci->bdf;
+    pci_config_writew(bdf, 0x40, 0x08);
+    pci_config_writew(bdf, 0x41, 0x06);
+    pci_config_writew(bdf, 0x42, 0xc0);
 }
 
 static void pic_ibm_setup(struct pci_device *pci, void *arg)
@@ -253,6 +296,15 @@ static void piix4_pm_config_setup(u16 bdf)
     pci_config_writeb(bdf, PIIX_PMREGMISC, 0x01); /* enable PM io space */
     pci_config_writel(bdf, PIIX_SMBHSTBASE, (acpi_pm_base + 0x100) | 1);
     pci_config_writeb(bdf, PIIX_SMBHSTCFG, 0x09); /* enable SMBus io space */
+}
+
+static void via_pm_config_setup(u16 bdf)
+{
+    pci_config_writeb(bdf, PCI_INTERRUPT_LINE, 0);
+
+    pci_config_writel(bdf, VIA_PMBASE, acpi_pm_base | 1);
+    pci_config_writel(bdf, VIA_SMBHSTBASE, (acpi_pm_base + 0x100) | 1);
+    pci_config_writeb(bdf, VIA_SMBHSTCFG, 0x00);
 }
 
 static int PiixPmBDF = -1;
@@ -286,6 +338,17 @@ static void ich9_smbus_setup(struct pci_device *dev, void *arg)
     ICH9SmbusBDF = dev->bdf;
 
     ich9_smbus_enable(dev->bdf);
+}
+
+static int VIAPmBDF = -1;
+
+static void via_pm_setup(struct pci_device *pci, void *arg)
+{
+    VIAPmBDF = pci->bdf;
+    via_pm_config_setup(pci->bdf);
+
+    acpi_pm1a_cnt = acpi_pm_base + 0x04;
+    pmtimer_setup(acpi_pm_base + 0x08);
 }
 
 static void intel_igd_setup(struct pci_device *dev, void *arg)
@@ -338,11 +401,19 @@ static const struct pci_device_id pci_device_tbl[] = {
     PCI_DEVICE(PCI_VENDOR_ID_INTEL, PCI_DEVICE_ID_INTEL_ICH9_LPC,
                mch_isa_bridge_setup),
 
+    /* VIA PCI to ISA bridge */
+    PCI_DEVICE(PCI_VENDOR_ID_VIA, PCI_DEVICE_ID_VIA_82C686,
+               via_isa_bridge_setup),
+    PCI_DEVICE(PCI_VENDOR_ID_VIA, PCI_DEVICE_ID_VIA_8231,
+               via_isa_bridge_setup),
+
     /* STORAGE IDE */
     PCI_DEVICE_CLASS(PCI_VENDOR_ID_INTEL, PCI_DEVICE_ID_INTEL_82371SB_1,
                      PCI_CLASS_STORAGE_IDE, piix_ide_setup),
     PCI_DEVICE_CLASS(PCI_VENDOR_ID_INTEL, PCI_DEVICE_ID_INTEL_82371AB,
                      PCI_CLASS_STORAGE_IDE, piix_ide_setup),
+    PCI_DEVICE_CLASS(PCI_VENDOR_ID_VIA, PCI_DEVICE_ID_VIA_82C586_1,
+                     PCI_CLASS_STORAGE_IDE, via_ide_setup),
     PCI_DEVICE_CLASS(PCI_ANY_ID, PCI_ANY_ID, PCI_CLASS_STORAGE_IDE,
                      storage_ide_setup),
 
@@ -357,6 +428,12 @@ static const struct pci_device_id pci_device_tbl[] = {
                piix4_pm_setup),
     PCI_DEVICE(PCI_VENDOR_ID_INTEL, PCI_DEVICE_ID_INTEL_ICH9_SMBUS,
                ich9_smbus_setup),
+
+    /* VIA Power Management device */
+    PCI_DEVICE(PCI_VENDOR_ID_VIA, PCI_DEVICE_ID_VIA_82C686_4,
+               via_pm_setup),
+    PCI_DEVICE(PCI_VENDOR_ID_VIA, PCI_DEVICE_ID_VIA_8231_4,
+               via_pm_setup),
 
     /* 0xff00 */
     PCI_DEVICE_CLASS(PCI_VENDOR_ID_APPLE, 0x0017, 0xff00, apple_macio_setup),

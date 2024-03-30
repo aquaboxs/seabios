@@ -239,6 +239,31 @@ void ich9_lpc_apmc_smm_setup(int isabdf, int mch_bdf)
     pci_config_writeb(mch_bdf, Q35_HOST_BRIDGE_SMRAM, 0x02 | 0x08);
 }
 
+static void via_apmc_smm_setup(int isabdf, int via_bdf)
+{
+    /* check if SMM init is already done */
+    u32 value = pci_config_readl(isabdf, VIA_DEVACTB);
+    if (value & VIA_DEVACTB_APMC_EN)
+        return;
+
+    /* enable the SMM memory window */
+    pci_config_writeb(via_bdf, VIA_DRAM, 0x00);
+
+    smm_save_and_copy();
+
+    /* enable SMI generation when writing to the APMC register */
+    pci_config_writel(isabdf, VIA_DEVACTB, value | VIA_DEVACTB_APMC_EN);
+
+    /* enable SMI generation */
+    value = inl(acpi_pm_base + VIA_PMIO_GLBCTL);
+    outl(value | VIA_PMIO_GLBCTL_SMI_EN, acpi_pm_base + VIA_PMIO_GLBCTL);
+
+    smm_relocate_and_restore();
+
+    /* close the SMM memory window and enable normal SMM */
+    pci_config_writeb(via_bdf, VIA_DRAM, 0x00);
+}
+
 static int SMMISADeviceBDF = -1, SMMPMDeviceBDF = -1;
 
 void
@@ -261,6 +286,20 @@ smm_device_setup(void)
         SMMISADeviceBDF = isapci->bdf;
         SMMPMDeviceBDF = pmpci->bdf;
     }
+    isapci = pci_find_device(PCI_VENDOR_ID_VIA, PCI_DEVICE_ID_VIA_8231);
+    pmpci = pci_find_device(PCI_VENDOR_ID_VIA, PCI_DEVICE_ID_VIA_8601_0);
+    if (isapci && pmpci) {
+        SMMISADeviceBDF = isapci->bdf;
+        SMMPMDeviceBDF = pmpci->bdf;
+        return;
+    }
+    isapci = pci_find_device(PCI_VENDOR_ID_VIA, PCI_DEVICE_ID_VIA_82C686);
+    pmpci = pci_find_device(PCI_VENDOR_ID_VIA, PCI_DEVICE_ID_VIA_82C691_0);
+    if (isapci && pmpci) {
+        SMMISADeviceBDF = isapci->bdf;
+        SMMPMDeviceBDF = pmpci->bdf;
+        return;
+    }
 }
 
 void
@@ -273,6 +312,10 @@ smm_setup(void)
     u16 device = pci_config_readw(SMMISADeviceBDF, PCI_DEVICE_ID);
     if (device == PCI_DEVICE_ID_INTEL_82371AB_3)
         piix4_apmc_smm_setup(SMMISADeviceBDF, SMMPMDeviceBDF);
-    else
+    else if (device == PCI_DEVICE_ID_INTEL_ICH9_LPC)
         ich9_lpc_apmc_smm_setup(SMMISADeviceBDF, SMMPMDeviceBDF);
+    else if (device == PCI_DEVICE_ID_VIA_8231)
+        via_apmc_smm_setup(SMMISADeviceBDF, SMMPMDeviceBDF);
+    else if (device == PCI_DEVICE_ID_VIA_82C686)
+        via_apmc_smm_setup(SMMISADeviceBDF, SMMPMDeviceBDF);
 }
