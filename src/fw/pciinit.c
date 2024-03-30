@@ -240,13 +240,13 @@ static void via_isa_bridge_setup(struct pci_device *pci, void *arg)
         /* activate irq remapping in VIA */
 
         /* INTA */
-        pci_config_writeb(bdf, 0x55 >> 4 + i, irq);
+        pci_config_writeb(bdf, 0x55 + i, irq);
         /* INTB */
-        pci_config_writeb(bdf, 0x56 & 0xf + i, irq);
+        pci_config_writeb(bdf, 0x56 + i, irq);
         /* INTC */
-        pci_config_writeb(bdf, 0x56 >> 4 + i, irq);
+        pci_config_writeb(bdf, 0x56 + i, irq);
         /* INTD */
-        pci_config_writeb(bdf, 0x57 >> 4 + i, irq);
+        pci_config_writeb(bdf, 0x57 + i, irq);
     }
 }
 
@@ -550,6 +550,16 @@ static void i440fx_mem_addr_setup(struct pci_device *dev, void *arg)
     pci_slot_get_irq = piix_pci_slot_get_irq;
 }
 
+static void via_mem_addr_setup(struct pci_device *dev, void *arg)
+{
+    if (RamSize <= 0x80000000)
+        pcimem_start = 0x80000000;
+    else if (RamSize <= 0xc0000000)
+        pcimem_start = 0xc0000000;
+
+    pci_slot_get_irq = via_pci_slot_get_irq;
+}
+
 static void mch_mmconfig_setup(u16 bdf)
 {
     u64 addr = Q35_HOST_BRIDGE_PCIEXBAR_ADDR;
@@ -588,6 +598,10 @@ static const struct pci_device_id pci_platform_tbl[] = {
                i440fx_mem_addr_setup),
     PCI_DEVICE(PCI_VENDOR_ID_INTEL, PCI_DEVICE_ID_INTEL_Q35_MCH,
                mch_mem_addr_setup),
+    PCI_DEVICE(PCI_VENDOR_ID_VIA, PCI_DEVICE_ID_VIA_82C691_0,
+               via_mem_addr_setup),
+    PCI_DEVICE(PCI_VENDOR_ID_VIA, PCI_DEVICE_ID_VIA_8601_0,
+               via_mem_addr_setup),
     PCI_DEVICE_END
 };
 

@@ -129,9 +129,9 @@ static const struct pci_device_id fadt_init_tbl[] = {
                ich9_lpc_fadt_setup),
     /* VIA Power Management device */
     PCI_DEVICE(PCI_VENDOR_ID_VIA, PCI_DEVICE_ID_VIA_82C686,
-               via_lpc_fadt_setup),
+               via_fadt_setup),
     PCI_DEVICE(PCI_VENDOR_ID_VIA, PCI_DEVICE_ID_VIA_8231,
-               via_lpc_fadt_setup),
+               via_fadt_setup),
     PCI_DEVICE_END
 };
 
