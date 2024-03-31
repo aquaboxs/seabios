@@ -8,6 +8,7 @@
 
 #include "byteorder.h" // cpu_to_le16
 #include "config.h" // CONFIG_*
+#include "dev-815ep.h"
 #include "dev-q35.h"
 #include "dev-piix.h"
 #include "dev-via.h"
@@ -58,6 +59,33 @@ static void piix4_fadt_setup(struct pci_device *pci, void *arg)
     fadt->pm1_cnt_len = 2;
     fadt->pm_tmr_len = 4;
     fadt->gpe0_blk_len = PIIX_GPE0_BLK_LEN;
+    fadt->plvl2_lat = cpu_to_le16(0xfff); // C2 state not supported
+    fadt->plvl3_lat = cpu_to_le16(0xfff); // C3 state not supported
+    fadt->flags = cpu_to_le32(ACPI_FADT_F_WBINVD |
+                              ACPI_FADT_F_PROC_C1 |
+                              ACPI_FADT_F_SLP_BUTTON |
+                              ACPI_FADT_F_RTC_S4 |
+                              ACPI_FADT_F_USE_PLATFORM_CLOCK);
+}
+
+static void ich2_lpc_fadt_setup(struct pci_device *dev, void *arg)
+{
+    struct fadt_descriptor_rev1 *fadt = arg;
+
+    fadt->model = 1;
+    fadt->reserved1 = 0;
+    fadt->sci_int = cpu_to_le16(9);
+    fadt->smi_cmd = cpu_to_le32(PORT_SMI_CMD);
+    fadt->acpi_enable = ICH2_ACPI_ENABLE;
+    fadt->acpi_disable = ICH2_ACPI_DISABLE;
+    fadt->pm1a_evt_blk = cpu_to_le32(acpi_pm_base);
+    fadt->pm1a_cnt_blk = cpu_to_le32(acpi_pm_base + 0x04);
+    fadt->pm_tmr_blk = cpu_to_le32(acpi_pm_base + 0x08);
+    fadt->gpe0_blk = cpu_to_le32(acpi_pm_base + ICH2_PMIO_GPE0_STS);
+    fadt->pm1_evt_len = 4;
+    fadt->pm1_cnt_len = 2;
+    fadt->pm_tmr_len = 4;
+    fadt->gpe0_blk_len = ICH2_PMIO_GPE0_BLK_LEN;
     fadt->plvl2_lat = cpu_to_le16(0xfff); // C2 state not supported
     fadt->plvl3_lat = cpu_to_le16(0xfff); // C3 state not supported
     fadt->flags = cpu_to_le32(ACPI_FADT_F_WBINVD |
@@ -125,6 +153,8 @@ static const struct pci_device_id fadt_init_tbl[] = {
     /* PIIX4 Power Management device (for ACPI) */
     PCI_DEVICE(PCI_VENDOR_ID_INTEL, PCI_DEVICE_ID_INTEL_82371AB_3,
                piix4_fadt_setup),
+    PCI_DEVICE(PCI_VENDOR_ID_INTEL, PCI_DEVICE_ID_INTEL_ICH2_LPC,
+               ich2_lpc_fadt_setup),
     PCI_DEVICE(PCI_VENDOR_ID_INTEL, PCI_DEVICE_ID_INTEL_ICH9_LPC,
                ich9_lpc_fadt_setup),
     /* VIA Power Management device */
@@ -616,6 +646,7 @@ build_mcfg_q35(void)
 static const struct pci_device_id acpi_find_tbl[] = {
     /* PIIX4 Power Management device. */
     PCI_DEVICE(PCI_VENDOR_ID_INTEL, PCI_DEVICE_ID_INTEL_82371AB_3, NULL),
+    PCI_DEVICE(PCI_VENDOR_ID_INTEL, PCI_DEVICE_ID_INTEL_ICH2_LPC, NULL),
     PCI_DEVICE(PCI_VENDOR_ID_INTEL, PCI_DEVICE_ID_INTEL_ICH9_LPC, NULL),
     /* VIA Power Management device. */
     PCI_DEVICE(PCI_VENDOR_ID_VIA, PCI_DEVICE_ID_VIA_82C686, NULL),

@@ -6,6 +6,7 @@
 // This file may be distributed under the terms of the GNU LGPLv3 license.
 
 #include "config.h" // CONFIG_*
+#include "dev-815ep.h"
 #include "dev-q35.h"
 #include "dev-piix.h"
 #include "dev-via.h"
@@ -212,6 +213,33 @@ static void piix4_apmc_smm_setup(int isabdf, int i440_bdf)
     pci_config_writeb(i440_bdf, I440FX_SMRAM, 0x02 | 0x08);
 }
 
+void ich2_lpc_apmc_smm_setup(int isabdf, int mch_bdf)
+{
+    /* check if SMM init is already done */
+    u32 value = inl(acpi_pm_base + ICH2_PMIO_SMI_EN);
+    if (value & ICH2_PMIO_SMI_EN_APMC_EN)
+        return;
+
+    /* enable the SMM memory window */
+    pci_config_writeb(mch_bdf, I815EP_HOST_BRIDGE_SMRAM, 0x02 | 0x48);
+
+    smm_save_and_copy();
+
+    /* enable SMI generation when writing to the APMC register */
+    outl(value | ICH2_PMIO_SMI_EN_APMC_EN | ICH2_PMIO_SMI_EN_GLB_SMI_EN,
+         acpi_pm_base + ICH2_PMIO_SMI_EN);
+
+    /* lock SMI generation */
+    value = pci_config_readw(isabdf, ICH2_LPC_GEN_PMCON_1);
+    pci_config_writel(isabdf, ICH2_LPC_GEN_PMCON_1,
+                      value | ICH2_LPC_GEN_PMCON_1_SMI_LOCK);
+
+    smm_relocate_and_restore();
+
+    /* close the SMM memory window and enable normal SMM */
+    pci_config_writeb(mch_bdf, I815EP_HOST_BRIDGE_SMRAM, 0x02 | 0x08);
+}
+
 /* PCI_VENDOR_ID_INTEL && PCI_DEVICE_ID_INTEL_ICH9_LPC */
 void ich9_lpc_apmc_smm_setup(int isabdf, int mch_bdf)
 {
@@ -281,6 +309,12 @@ smm_device_setup(void)
         SMMPMDeviceBDF = pmpci->bdf;
         return;
     }
+    isapci = pci_find_device(PCI_VENDOR_ID_INTEL, PCI_DEVICE_ID_INTEL_ICH2_LPC);
+    pmpci = pci_find_device(PCI_VENDOR_ID_INTEL, PCI_DEVICE_ID_INTEL_I815EP_MCH);
+    if (isapci && pmpci) {
+        SMMISADeviceBDF = isapci->bdf;
+        SMMPMDeviceBDF = pmpci->bdf;
+    }
     isapci = pci_find_device(PCI_VENDOR_ID_INTEL, PCI_DEVICE_ID_INTEL_ICH9_LPC);
     pmpci = pci_find_device(PCI_VENDOR_ID_INTEL, PCI_DEVICE_ID_INTEL_Q35_MCH);
     if (isapci && pmpci) {
@@ -313,6 +347,8 @@ smm_setup(void)
     u16 device = pci_config_readw(SMMISADeviceBDF, PCI_DEVICE_ID);
     if (device == PCI_DEVICE_ID_INTEL_82371AB_3)
         piix4_apmc_smm_setup(SMMISADeviceBDF, SMMPMDeviceBDF);
+    else if (device == PCI_DEVICE_ID_INTEL_ICH2_LPC)
+        ich2_lpc_apmc_smm_setup(SMMISADeviceBDF, SMMPMDeviceBDF);
     else if (device == PCI_DEVICE_ID_INTEL_ICH9_LPC)
         ich9_lpc_apmc_smm_setup(SMMISADeviceBDF, SMMPMDeviceBDF);
     else if (device == PCI_DEVICE_ID_VIA_8231)

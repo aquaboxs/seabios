@@ -7,6 +7,7 @@
 
 #include "byteorder.h" // le64_to_cpu
 #include "config.h" // CONFIG_*
+#include "dev-815ep.h"
 #include "dev-q35.h" // Q35_HOST_BRIDGE_PCIEXBAR_ADDR
 #include "dev-piix.h" // PIIX_*
 #include "dev-via.h" // VIA_*
@@ -127,6 +128,18 @@ static int piix_pci_slot_get_irq(struct pci_device *pci, int pin)
     return pci_irqs[(pin - 1 + slot_addend) & 3];
 }
 
+static int ich2_pci_slot_get_irq(struct pci_device *pci, int pin)
+{
+    int slot_addend = 0;
+
+    while (pci->parent != NULL) {
+        slot_addend += pci_bdf_to_dev(pci->bdf);
+        pci = pci->parent;
+    }
+    slot_addend += pci_bdf_to_dev(pci->bdf) - 1;
+    return pci_irqs[(pin - 1 + slot_addend) & 3];
+}
+
 static int mch_pci_slot_get_irq(struct pci_device *pci, int pin)
 {
     int pin_addend = 0;
@@ -187,6 +200,55 @@ static void mch_isa_lpc_setup(u16 bdf)
     /* set root complex register block BAR */
     pci_config_writel(bdf, ICH9_LPC_RCBA,
                       ICH9_LPC_RCBA_ADDR | ICH9_LPC_RCBA_EN);
+}
+
+static void i815ep_isa_lpc_setup(u16 bdf)
+{
+    /* pm io base */
+    pci_config_writel(bdf, ICH2_LPC_PMBASE,
+                      acpi_pm_base | ICH2_LPC_PMBASE_RTE);
+
+    /* acpi enable, SCI: IRQ9 000b = irq9*/
+    pci_config_writeb(bdf, ICH2_LPC_ACPI_CTRL, ICH2_LPC_ACPI_CTRL_ACPI_EN);
+
+    /* set root complex register block BAR */
+    pci_config_writel(bdf, ICH2_LPC_RCBA,
+                      ICH2_LPC_RCBA_ADDR | ICH2_LPC_RCBA_EN);
+}
+
+static int ICH2LpcBDF = -1;
+
+/* ICH2 LPC PCI to ISA bridge */
+static void ich2_isa_bridge_setup(struct pci_device *dev, void *arg)
+{
+    u16 bdf = dev->bdf;
+    int i, irq;
+    u8 elcr[2];
+
+    elcr[0] = 0x00;
+    elcr[1] = 0x00;
+
+    for (i = 0; i < 4; i++) {
+        irq = pci_irqs[i];
+        /* set to trigger level */
+        elcr[irq >> 3] |= (1 << (irq & 7));
+
+        /* activate irq remapping in LPC */
+
+        /* PIRQ[A-D] routing */
+        pci_config_writeb(bdf, ICH2_LPC_PIRQA_ROUT + i, irq);
+        /* PIRQ[E-H] routing */
+        pci_config_writeb(bdf, ICH2_LPC_PIRQE_ROUT + i, irq);
+    }
+    outb(elcr[0], ICH2_LPC_PORT_ELCR1);
+    outb(elcr[1], ICH2_LPC_PORT_ELCR2);
+
+    ICH2LpcBDF = bdf;
+
+    i815ep_isa_lpc_setup(bdf);
+
+    acpi_pm1a_cnt = acpi_pm_base + 0x04;
+    pmtimer_setup(acpi_pm_base + 0x08);
 }
 
 static int ICH9LpcBDF = -1;
@@ -267,6 +329,14 @@ static void piix_ide_setup(struct pci_device *pci, void *arg)
     pci_config_writew(bdf, 0x42, 0x8000); // enable IDE1
 }
 
+/* ICH2 IDE */
+static void ich2_ide_setup(struct pci_device *pci, void *arg)
+{
+    u16 bdf = pci->bdf;
+    pci_config_writew(bdf, 0x40, 0x8000); // enable IDE0
+    pci_config_writew(bdf, 0x42, 0x8000); // enable IDE1
+}
+
 /* VIA IDE */
 static void via_ide_setup(struct pci_device *pci, void *arg)
 {
@@ -318,6 +388,26 @@ static void piix4_pm_setup(struct pci_device *pci, void *arg)
 
     acpi_pm1a_cnt = acpi_pm_base + 0x04;
     pmtimer_setup(acpi_pm_base + 0x08);
+}
+
+static void ich2_smbus_enable(u16 bdf)
+{
+    /* map smbus into io space */
+    pci_config_writel(bdf, ICH2_SMB_SMB_BASE,
+                      (acpi_pm_base + 0x100) | PCI_BASE_ADDRESS_SPACE_IO);
+
+    /* enable SMBus */
+    pci_config_writeb(bdf, ICH2_SMB_HOSTC, ICH2_SMB_HOSTC_HST_EN);
+}
+
+static int ICH2SmbusBDF = -1;
+
+/* ICH2 SMBUS */
+static void ich2_smbus_setup(struct pci_device *dev, void *arg)
+{
+    ICH2SmbusBDF = dev->bdf;
+
+    ich2_smbus_enable(dev->bdf);
 }
 
 static void ich9_smbus_enable(u16 bdf)
@@ -399,6 +489,8 @@ static const struct pci_device_id pci_device_tbl[] = {
                piix_isa_bridge_setup),
     PCI_DEVICE(PCI_VENDOR_ID_INTEL, PCI_DEVICE_ID_INTEL_82371AB_0,
                piix_isa_bridge_setup),
+    PCI_DEVICE(PCI_VENDOR_ID_INTEL, PCI_DEVICE_ID_INTEL_ICH2_LPC,
+               ich2_isa_bridge_setup),
     PCI_DEVICE(PCI_VENDOR_ID_INTEL, PCI_DEVICE_ID_INTEL_ICH9_LPC,
                mch_isa_bridge_setup),
 
@@ -413,6 +505,8 @@ static const struct pci_device_id pci_device_tbl[] = {
                      PCI_CLASS_STORAGE_IDE, piix_ide_setup),
     PCI_DEVICE_CLASS(PCI_VENDOR_ID_INTEL, PCI_DEVICE_ID_INTEL_82371AB,
                      PCI_CLASS_STORAGE_IDE, piix_ide_setup),
+    PCI_DEVICE_CLASS(PCI_VENDOR_ID_INTEL, PCI_DEVICE_ID_INTEL_ICH2_IDE,
+                     PCI_CLASS_STORAGE_IDE, ich2_ide_setup),
     PCI_DEVICE_CLASS(PCI_VENDOR_ID_VIA, PCI_DEVICE_ID_VIA_82C586_1,
                      PCI_CLASS_STORAGE_IDE, via_ide_setup),
     PCI_DEVICE_CLASS(PCI_ANY_ID, PCI_ANY_ID, PCI_CLASS_STORAGE_IDE,
@@ -427,6 +521,8 @@ static const struct pci_device_id pci_device_tbl[] = {
     /* PIIX4 Power Management device (for ACPI) */
     PCI_DEVICE(PCI_VENDOR_ID_INTEL, PCI_DEVICE_ID_INTEL_82371AB_3,
                piix4_pm_setup),
+    PCI_DEVICE(PCI_VENDOR_ID_INTEL, PCI_DEVICE_ID_INTEL_ICH2_SMBUS,
+               ich2_smbus_setup),
     PCI_DEVICE(PCI_VENDOR_ID_INTEL, PCI_DEVICE_ID_INTEL_ICH9_SMBUS,
                ich9_smbus_setup),
 
@@ -560,6 +656,16 @@ static void via_mem_addr_setup(struct pci_device *dev, void *arg)
     pci_slot_get_irq = via_pci_slot_get_irq;
 }
 
+static void i815ep_mem_addr_setup(struct pci_device *dev, void *arg)
+{
+    if (RamSize <= 0x80000000)
+        pcimem_start = 0x80000000;
+    else if (RamSize <= 0xb0000000)
+        pcimem_start = 0xb0000000;
+
+    pci_slot_get_irq = ich2_pci_slot_get_irq;
+}
+
 static void mch_mmconfig_setup(u16 bdf)
 {
     u64 addr = Q35_HOST_BRIDGE_PCIEXBAR_ADDR;
@@ -596,6 +702,8 @@ static void mch_mem_addr_setup(struct pci_device *dev, void *arg)
 static const struct pci_device_id pci_platform_tbl[] = {
     PCI_DEVICE(PCI_VENDOR_ID_INTEL, PCI_DEVICE_ID_INTEL_82441,
                i440fx_mem_addr_setup),
+    PCI_DEVICE(PCI_VENDOR_ID_INTEL, PCI_DEVICE_ID_INTEL_I815EP_MCH,
+               i815ep_mem_addr_setup),
     PCI_DEVICE(PCI_VENDOR_ID_INTEL, PCI_DEVICE_ID_INTEL_Q35_MCH,
                mch_mem_addr_setup),
     PCI_DEVICE(PCI_VENDOR_ID_VIA, PCI_DEVICE_ID_VIA_82C691_0,
